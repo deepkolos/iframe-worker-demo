@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>iframe worker</title>
+  </head>
+  <body>
+    <div id="count"></div>
+    <script>
+      let i = 0;
+      let div = document.getElementById('count');
+      setInterval(() => {
+        div.innerText = i++;
+      }, 100);
+    </script>
+
+    <iframe src="http://192.168.1.3:8081/index.html" frameborder="0"></iframe>
+    <!-- <iframe src="http://127.0.0.1:8081/index.html" frameborder="0"></iframe> -->
+
+    <script type="module">
+      import { ZSTDDecoderWorker } from './ZSTDDecoderWorker.js';
+      /** @type HTMLIFrameElement */
+      const $worker = document.getElementsByTagName('iframe')[0];
+      const channel = new MessageChannel();
+      const decoder = new ZSTDDecoderWorker(1);
+
+      Promise.all([
+        fetch('./group1-shard1of2.bin.zst').then(i => i.arrayBuffer()),
+        new Promise(resolve => ($worker.onload = resolve)),
+        decoder.init(),
+      ]).then(([zstBuffer]) => {
+        console.log(zstBuffer);
+        const data = zstBuffer.slice(0);
+
+        $worker.contentWindow.postMessage({ time: Date.now() }, '*', [
+          channel.port2,
+        ]);
+
+        const dataSendTime = Date.now();
+        channel.port1.postMessage({ data, time: dataSendTime }, [data]);
+        channel.port1.onmessage = async e => {
+          const { data, time } = e.data;
+          const dataReceivedTime = Date.now();
+          console.log('data from msg channel', dataReceivedTime - time);
+          console.log('iframe worker decode time', dataReceivedTime - dataSendTime);
+
+          const dataInput = zstBuffer.slice(0);
+          const decodeStartTime = Date.now();
+          const output = await decoder.decode(new Uint8Array(dataInput));
+          const decodeEndTime = Date.now();
+          console.log('worker decode time', decodeEndTime - decodeStartTime);
+        };
+        // $worker.contentWindow.postMessage(
+        //   { zstBuffer, time: Date.now() },
+        //   '*',
+        //   [zstBuffer],
+        // );
+      });
+    </script>
+  </body>
+</html>
